@@ -10,13 +10,12 @@ fi
 apt-get install -y systemd
 
 grub='/etc/default/grub'
-regexp='GRUB_CMDLINE_LINUX_DEFAULT=".*init=/lib/systemd/systemd"'
+regexp='GRUB_CMDLINE_LINUX_DEFAULT=".*init=/lib/systemd/systemd.*"'
 
 if [[ -z `grep -x $regexp $grub` ]]; then
     echo -ne '\nModify' $grub 'line '
     echo `grep -n GRUB_CMDLINE_LINUX_DEFAULT $grub`
-    echo -n 'to: '
-    echo -n `grep GRUB_CMDLINE_LINUX_DEFAULT $grub`
+    echo -n to: `grep GRUB_CMDLINE_LINUX_DEFAULT $grub`
     echo -e '\b init=/lib/systemd/systemd"'
     echo -n 'with editor(nano, vi, ...): '
     read editor

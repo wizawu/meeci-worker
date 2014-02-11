@@ -7,11 +7,25 @@ if [[ `whoami` != "root" ]]; then
     exit 1
 fi
 
+# Step 1: install dependencies
 apt-get install -y \
                 systemd \
                 libmemcached-dev \
-                libsystemd-daemon-dev
+                libsystemd-daemon-dev \
+                openssh-client
 
+# Step 2: generate SSH key for root
+if [[ ! -f ~/.ssh/id_rsa.pub ]]; then
+    ssh-keygen -t rsa
+fi
+
+# Step 3: install your key on Meeci host
+echo -n "Enter Meeci host IP: "
+read host
+ssh-copy-id meeci@$host
+
+# Step 4: append "init=/lib/systemd/systemd"(without quotes) to the value of
+#         GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub
 grub="/etc/default/grub"
 opt="GRUB_CMDLINE_LINUX_DEFAULT"
 regex="GRUB_CMDLINE_LINUX_DEFAULT=\".*init=/lib/systemd/systemd.*\""
@@ -24,14 +38,8 @@ if [[ -z `grep -x $regex $grub` ]]; then
     echo -n "with editor(nano, vi, ...): "
     read editor
     $editor $grub
+    echo "Reboot to enable systemd."
 fi
 
-echo -n "Reboot now? (Y/n) "
-read -N 1 ans
-
-case $ans in
-    Y ) echo reboot;;
-    * ) echo -e "\nPlease reboot later."
-esac
-
+echo "Exit without errors."
 exit 0

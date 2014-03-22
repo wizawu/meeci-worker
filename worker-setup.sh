@@ -8,11 +8,12 @@ if [[ `whoami` != "root" ]]; then
 fi
 
 # step 1: install dependencies
-apt-get install -y --no-install-recommends systemd nodejs
+apt-get install -y --no-install-recommends \
+                systemd nodejs wget wput
 
 # step 2: 
 if [[ ! `cat /proc/1/comm` == systemd ]]; then
-    echo "Reboot the system with systemd"
+    echo "Reboot the system with systemd and re-run this setup"
     exit 2
 fi
 
@@ -20,5 +21,5 @@ fi
 mkdir -p /var/lib/meeci/worker/container/logs
 mkdir -p /var/lib/meeci/worker/build/logs
 
-echo "Exit without errors"
+echo "$0 exited without errors"
 exit 0

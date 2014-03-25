@@ -9,7 +9,7 @@ fi
 
 # step 1: install dependencies
 apt-get install -y --no-install-recommends \
-                systemd nodejs wget wput
+                lua5.2 lua-socket systemd wget wput
 
 # step 2: 
 if [[ ! `cat /proc/1/comm` == systemd ]]; then

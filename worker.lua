@@ -10,18 +10,21 @@ local http = require("socket.http")
 
 -- check effective uid
 if io.popen("whoami"):read("*l") ~= "root" then
-    print("Start the worker as root")
+    print("Need to be root.")
     os.exit(1)
 end
 
 -- retrieve url from environment
 local meeci_host = os.getenv("MEECI_HOST")
 if not meeci_host then
-    print("MEECI_HOST is not defined")
+    print("MEECI_HOST is not defined.")
     os.exit(2)
 end
+
 local meeci_http = "http://" .. meeci_host
 local meeci_ftp = "ftp://" .. meeci_host
+local mc = memcached.connect(meeci_host, 11211)
+local logdir = "/var/lib/meeci/worker/logs"
 
 --< function definitions
 function sleep(n)
@@ -32,12 +35,11 @@ function fwrite(fmt, ...)
     return io.write(string.format(fmt, ...))
 end
 
-function accept()
-    local body, code = http.request("http://" .. meeci_host .. "/task")
+-- receive a task from meeci-web
+function receive()
+    local body, code = http.request(meeci_http .. "/task")
     if code == 200 then
         return json.decode(body)
-    else
-        return nil
     end
 end
 
@@ -84,6 +86,33 @@ function gitclone(task)
         local url = meeci_http .. "/scripts/" .. task.id 
         return os.execute("wget -O " .. dir .. "/meeci_build.sh " .. url)
     end
+end
+
+-- run a build task or create a container
+function build(task)
+    local dir, script, line
+    if task.type == "build" then
+        dir = "/opt/" .. task.repository
+        script = "meeci_build.sh"
+    else
+        dir = "/root"
+        script = task.container .. ".sh"
+    end
+    local fmt = "cd %s; bash %s; echo $? > /meeci_exit_status"
+    local cmd = string.format(fmt, dir, script)
+    cmd = string.format("systemd-nspawn -D ./container bash -c '%s'", cmd)
+
+    local log = string.format("%s/%s/%d.log", logdir, task.type, task.id)
+    log = io:open(log, 'a')
+    local key = string.sub(task.type, 1, 1) .. "#" .. tostring(task.id)
+    mc:set(key, "")
+    local pipe = io.popen(cmd)
+    repeat
+        line = pipe:read("*L")
+        log:write(line)
+        mc:append(key, line)
+    until not line
+    log:close()
 end
 -->
 

@@ -28,7 +28,7 @@ end
 
 
 -- Dependencies
-require "socket"
+local socket = require("socket")
 local socket, string, table = socket, string, table
 local assert, print, setmetatable, type, tonumber, tostring =
    assert, print, setmetatable, type, tonumber, tostring

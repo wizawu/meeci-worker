@@ -1,25 +1,26 @@
 #!/bin/bash
 
-set -e
-
-if [[ `whoami` != "root" ]]; then
-    echo "Must run $0 as root"
+if [[ `whoami` != root ]]; then
+    echo "Need to be root."
     exit 1
 fi
 
-# step 1: install dependencies
-apt-get install -y --no-install-recommends \
-                lua5.2 lua-socket systemd wget wput
+set -x -e
 
-# step 2: 
+apt-get install -y --no-install-recommends \
+                lua5.2 lua-socket git wget wput systemd
+
 if [[ ! `cat /proc/1/comm` == systemd ]]; then
-    echo "Reboot the system with systemd and re-run this setup"
+    echo "Reboot the system with systemd and re-run this setup."
     exit 2
 fi
 
-# step 3: create directories
-mkdir -p /var/lib/meeci/worker/container/logs
-mkdir -p /var/lib/meeci/worker/build/logs
+mkdir -p /var/lib/meeci/worker/logs/build
+mkdir -p /var/lib/meeci/worker/logs/container
 
-echo "$0 exited without errors"
-exit 0
+chmod a+x ./worker.lua
+
+set +x
+
+echo "Now you can start the worker with: sudo MEECI_HOST=192.168.0.1 ./worker.lua"
+echo "Replace the IP address above with the actual one."

@@ -8,7 +8,7 @@ fi
 set -x -e
 
 apt-get install -y --no-install-recommends \
-                lua5.2 lua-socket git wget wput systemd
+                luajit lua-socket git wget wput systemd
 
 if [[ ! `cat /proc/1/comm` == systemd ]]; then
     echo "Reboot the system with systemd and re-run this setup."

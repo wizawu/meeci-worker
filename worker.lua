@@ -22,7 +22,7 @@ if not meeci_host then
 end
 
 local meeci_http = "http://" .. meeci_host
-local meeci_ftp = "ftp://" .. meeci_host
+local meeci_ftp = "ftp://" .. meeci_host .. "/meeci"
 local mc = memcached.connect(meeci_host, 11211)
 local logdir = "/var/lib/meeci/worker/logs"
 
@@ -48,32 +48,21 @@ function log(task)
     if task.type == "build" then
         os.write(task.url .. '\n')
     else
-        os.write(task.target .. '\n')
+        os.write(task.container .. '\n')
     end
 end
 
--- download container and 
-function download(container)
-    local dir = "ftp://" .. meeci_host .. "/meeci/container/"
-    local url = dir .. container .. ".bz2"
-    if os.execute("wget -O container.bz2 " .. url) then
-        url = dir .. container .. ".sh"
-        if os.execute("wget -O script.sh " .. url) then
-            return true
-        end
-    end
-    return false
+-- download files in /meeci/container
+function wget(file)
+   local cmd = "wget " .. meeci_ftp .. "/container/" .. file
+   return os.execute(cmd)
 end
 
--- compress and upload a new container
+-- extract a container into 'container' directory
 -- [args] container: container name with suffix .bz2
-function upload(container)
-    if os.execute("tar jcf container.bz2 -C container .") then
-        local url = meeci_ftp .. "/meeci/containers/" .. container
-        if os.execute("wput container.bz2 " .. url) then
-            return true
-        end
-    end
+function tarx(container)
+    os.execute("rm -rf container && mkdir container")
+    return os.execute("tar xf " .. container .. " -C container") 
 end
 
 -- download a shallow repository and its build script 
@@ -82,9 +71,29 @@ function gitclone(task)
     if not os.execute("mkdir -p " .. dir) then
         return false
     end
-    if os.execute("git clone --depth 1 " .. task.url .. " " .. dir) then
-        local url = meeci_http .. "/scripts/" .. task.id 
-        return os.execute("wget -O " .. dir .. "/meeci_build.sh " .. url)
+    local cmd = "git clone --depth 30 -b %s %s %s"
+    cmd = string.format(cmd, task.branch, task.url, dir)
+    if not os.execute(cmd) then
+        return false
+    end
+    cmd = "cd " .. dir .. "; git checkout " .. task.commit
+    if not os.execute(cmd) then
+        return false
+    end
+    local url = meeci_http .. "/scripts/" .. task.script
+    cmd = "wget -O " .. dir .. "/meeci_build.sh " .. url
+    return os.execute(cmd)
+end
+
+-- compress and upload a new container
+-- [args] container: container name with suffix .bz2
+function upload(container)
+    if os.execute("tar jcf container.bz2 -C container .") then
+        local url = meeci_ftp .. "/containers/" .. container
+        if os.execute("wput container.bz2 " .. url) then
+            os.remove("container.bz2")
+            return true
+        end
     end
 end
 
@@ -116,32 +125,42 @@ function build(task)
 end
 -->
 
--- main loop of worker
+if not wget("meeci-minbase.bz2") then
+    print("Cannot wget meeci-minbase.bz2")
+    os.exit(3)
+end
+
+-- main loop --
 local failure = 0
 while true do
     local done = false
-    local task = accept()
+    local task = receive()
     if task then
         log(task)
         if task.type == "build" then
             if not wget(task.container .. ".bz2") then
-                goto NETX_TASK
+                goto END_TASK
+            end
+            if not tarx(task.container .. ".bz2") then
+                goto END_TASK
+            end
+            if not gitclone(task) then
+                goto END_TASK
             end
         else
-            if not wget("meeci-minbase.bz2") then
-                goto NETX_TASK
+            if not tarx("meeci-minbase.bz2") then
+                goto END_TASK
             end
-            if not wget(task.container .. ".sh") then
-                goto NETX_TASK
+            local script = task.container .. ".sh"
+            if not wget(script) then
+                goto END_TASK
             end
-            if not create(task.container) then
-                goto NETX_TASK
-            end
+            os.rename(script, "container/root/" .. script)
         end
+        done = build(task)
     end
-    done = true
 
-    ::NETX_TASK::
+    ::END_TASK::
     if done then
         fwrite("[%s] succeed\n", os.date())
         if failure > 0 then
@@ -151,6 +170,7 @@ while true do
         fwrite("[%s] fail\n", os.date())
         failure = failure + 1
         if failure == 10 then
+            fwrite("Worker stopped because of too many failures.\n")
             os.exit(10)
         end
     end

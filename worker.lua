@@ -1,12 +1,12 @@
 #!/usr/bin/lua
 
-require("dkjson")
-require("memcached")
-
 local io = require("io")
 local os = require("os")
 local string = require("string")
 local http = require("socket.http")
+local json = require("dkjson")
+local memcache = require("memcached")
+local nonblock = require("nonblock")
 
 -- check effective uid
 if io.popen("whoami"):read("*l") ~= "root" then
@@ -23,16 +23,23 @@ end
 
 local meeci_http = "http://" .. meeci_host
 local meeci_ftp = "ftp://" .. meeci_host .. "/meeci"
-local mc = memcached.connect(meeci_host, 11211)
-local logdir = "/var/lib/meeci/worker/logs"
+local mc = memcache.connect(meeci_host, 11211)
 
 --< function definitions
+function fwrite(fmt, ...)
+    return io.write(string.format(fmt, ...))
+end
+
 function sleep(n)
     os.execute("sleep " .. tonumber(n)) 
 end
 
-function fwrite(fmt, ...)
-    return io.write(string.format(fmt, ...))
+-- return content of a file
+function cat(file)
+    local stream = io.popen("cat " .. file)
+    local result = stream:read("*a")
+    stream:close()
+    return result
 end
 
 -- receive a task from meeci-web
@@ -54,7 +61,7 @@ end
 
 -- download files in /meeci/container
 function wget(file)
-   local cmd = "wget " .. meeci_ftp .. "/container/" .. file
+   local cmd = "wget " .. meeci_ftp .. "/containers/" .. file
    return os.execute(cmd)
 end
 
@@ -85,9 +92,23 @@ function gitclone(task)
     return os.execute(cmd)
 end
 
+-- inform meeci-web the result
+function report(task, start, stop, code)
+    local str = json.encode({
+        type   = task.type,
+        id     = task.id,
+        start  = start,
+        stop   = stop,
+        exit   = code
+    })
+    mc:set(string.sub(task.type, 1, 1) .. ":" .. task.id, str)
+    http.request(meeci_http .. "/finish", tostring(code))
+end
+
 -- compress and upload a new container
 -- [args] container: container name with suffix .bz2
 function upload(container)
+    os.execute("rm -f container/meeci_exit_status")
     if os.execute("tar jcf container.bz2 -C container .") then
         local url = meeci_ftp .. "/containers/" .. container
         if os.execute("wput container.bz2 " .. url) then
@@ -99,7 +120,7 @@ end
 
 -- run a build task or create a container
 function build(task)
-    local dir, script, line
+    local dir, script
     if task.type == "build" then
         dir = "/opt/" .. task.repository
         script = "meeci_build.sh"
@@ -107,21 +128,40 @@ function build(task)
         dir = "/root"
         script = task.container .. ".sh"
     end
-    local fmt = "cd %s; bash %s; echo $? > /meeci_exit_status"
-    local cmd = string.format(fmt, dir, script)
+    local cmd = "cd %s; bash %s; echo -n $? > /meeci_exit_status"
+    cmd = string.format(cmd, dir, script)
     cmd = string.format("systemd-nspawn -D ./container bash -c '%s'", cmd)
 
+    -- file log
+    local logdir = "/var/lib/meeci/worker/logs"
     local log = string.format("%s/%s/%d.log", logdir, task.type, task.id)
     log = io:open(log, 'a')
+    -- memcache log
     local key = string.sub(task.type, 1, 1) .. "#" .. tostring(task.id)
     mc:set(key, "")
-    local pipe = io.popen(cmd)
-    repeat
-        line = pipe:read("*L")
+
+    local start = os.time()
+    local stream, fd = nonblock:popen(cmd)
+
+    while true do
+        local n, line = nonblock:read(fd)
+        if n == 0 then break end
         log:write(line)
         mc:append(key, line)
-    until not line
+        if n < 1000 then sleep(1) end
+    end
+
     log:close()
+    nonblock:pclose(stream)
+    local stop = os.time()
+    local code = tonumber(cat("container/meeci_exit_status"))
+
+    report(task, start, stop, code)
+    if task.type == "build" then
+        return true
+    else
+        return upload(task.container .. ".bz2")
+    end
 end
 -->
 
@@ -144,6 +184,7 @@ while true do
             if not tarx(task.container .. ".bz2") then
                 goto END_TASK
             end
+            os.remove(task.container .. ".bz2")
             if not gitclone(task) then
                 goto END_TASK
             end
@@ -161,6 +202,7 @@ while true do
     end
 
     ::END_TASK::
+    os.execute("rm -rf container")
     if done then
         fwrite("[%s] succeed\n", os.date())
         if failure > 0 then

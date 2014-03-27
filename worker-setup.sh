@@ -21,6 +21,5 @@ mkdir -p /var/lib/meeci/worker/logs/container
 chmod a+x ./worker.lua
 
 set +x
-
 echo "Now you can start the worker with: sudo MEECI_HOST=192.168.0.1 ./worker.lua"
 echo "Replace the IP address above with the actual one."

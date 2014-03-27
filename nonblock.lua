@@ -25,7 +25,7 @@ end
 module.read = function(self, fd)
     ffi.fill(self.buffer, 1024)
     local n = ffi.C.read(fd, self.buffer, 1023)
-    return ffi.string(self.buffer) 
+    return n, ffi.string(self.buffer)
 end
 
 module.pclose = function(self, stream)

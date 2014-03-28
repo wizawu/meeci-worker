@@ -30,17 +30,18 @@ function fwrite(fmt, ...)
     return io.write(string.format(fmt, ...))
 end
 
+function sleep(n)
+    os.execute("sleep " .. tonumber(n))
+end
+
 -- luajit os.execute returns only the exit status
 function execute(cmd)
+    print(cmd)
     if _G.jit then
         return os.execute(cmd) == 0
     else
         return os.execute(cmd)
     end
-end
-
-function sleep(n)
-    execute("sleep " .. tonumber(n))
 end
 
 -- return content of a file
@@ -62,9 +63,9 @@ end
 function log(task)
     fwrite("[%s] %s %d: ", os.date(), task.type, task.id)
     if task.type == "build" then
-        os.write(task.url .. '\n')
+        io.write(task.url .. '\n')
     else
-        os.write(task.container .. '\n')
+        io.write(task.container .. '\n')
     end
 end
 
@@ -111,7 +112,10 @@ function report(task, start, stop, code)
         exit   = code
     })
     mc:set(string.sub(task.type, 1, 1) .. ":" .. task.id, str)
-    http.request(meeci_http .. "/finish", tostring(code))
+    local path = string.format(
+        "/finish/%s/%d", string.sub(task.type, 1, 1), task.id
+    )
+    http.request(meeci_http .. path, tostring(code))
 end
 
 -- compress and upload a new container
@@ -144,7 +148,7 @@ function build(task)
     -- file log
     local logdir = "/var/lib/meeci/worker/logs"
     local log = string.format("%s/%s/%d.log", logdir, task.type, task.id)
-    log = io:open(log, 'a')
+    log = io.open(log, 'a')
     -- memcache log
     local key = string.sub(task.type, 1, 1) .. "#" .. tostring(task.id)
     mc:set(key, "")
@@ -158,6 +162,7 @@ function build(task)
         log:write(line)
         mc:append(key, line)
         if n < 1000 then sleep(1) end
+        -- TODO: 10min and 60min limit
     end
 
     log:close()
@@ -174,14 +179,16 @@ function build(task)
 end
 -->
 
-if not wget("meeci-minbase.bz2") then
+local test = os.getenv("TEST") and true or false
+
+if not test and not wget("meeci-minbase.bz2") then
     print("Cannot wget meeci-minbase.bz2")
     os.exit(3)
 end
 
 -- main loop --
 local failure, idle = 0, os.time()
-while true do
+while not test do
     local done = false
     local task = receive()
     if task then

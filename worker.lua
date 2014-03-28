@@ -1,4 +1,4 @@
-#!/usr/bin/lua
+#!/usr/bin/luajit
 
 local io = require("io")
 local os = require("os")
@@ -30,8 +30,17 @@ function fwrite(fmt, ...)
     return io.write(string.format(fmt, ...))
 end
 
+-- luajit os.execute returns only the exit status
+function execute(cmd)
+    if _G.jit then
+        return os.execute(cmd) == 0
+    else
+        return os.execute(cmd)
+    end
+end
+
 function sleep(n)
-    os.execute("sleep " .. tonumber(n)) 
+    execute("sleep " .. tonumber(n))
 end
 
 -- return content of a file
@@ -61,35 +70,35 @@ end
 
 -- download files in /meeci/container
 function wget(file)
-   local cmd = "wget " .. meeci_ftp .. "/containers/" .. file
-   return os.execute(cmd)
+   local cmd = "wget -N " .. meeci_ftp .. "/containers/" .. file
+   return execute(cmd)
 end
 
 -- extract a container into 'container' directory
 -- [args] container: container name with suffix .bz2
 function tarx(container)
-    os.execute("rm -rf container && mkdir container")
-    return os.execute("tar xf " .. container .. " -C container") 
+    execute("rm -rf container && mkdir container")
+    return execute("tar xf " .. container .. " -C container")
 end
 
--- download a shallow repository and its build script 
+-- download a shallow repository and its build script
 function gitclone(task)
     local dir = "container/opt/" .. task.repository
-    if not os.execute("mkdir -p " .. dir) then
+    if not execute("mkdir -p " .. dir) then
         return false
     end
     local cmd = "git clone --depth 30 -b %s %s %s"
     cmd = string.format(cmd, task.branch, task.url, dir)
-    if not os.execute(cmd) then
+    if not execute(cmd) then
         return false
     end
     cmd = "cd " .. dir .. "; git checkout " .. task.commit
-    if not os.execute(cmd) then
+    if not execute(cmd) then
         return false
     end
     local url = meeci_http .. "/scripts/" .. task.script
     cmd = "wget -O " .. dir .. "/meeci_build.sh " .. url
-    return os.execute(cmd)
+    return execute(cmd)
 end
 
 -- inform meeci-web the result
@@ -108,10 +117,10 @@ end
 -- compress and upload a new container
 -- [args] container: container name with suffix .bz2
 function upload(container)
-    os.execute("rm -f container/meeci_exit_status")
-    if os.execute("tar jcf container.bz2 -C container .") then
+    execute("rm -f container/meeci_exit_status")
+    if execute("tar jcf container.bz2 -C container .") then
         local url = meeci_ftp .. "/containers/" .. container
-        if os.execute("wput container.bz2 " .. url) then
+        if execute("wput container.bz2 " .. url) then
             os.remove("container.bz2")
             return true
         end
@@ -171,7 +180,7 @@ if not wget("meeci-minbase.bz2") then
 end
 
 -- main loop --
-local failure = 0
+local failure, idle = 0, os.time()
 while true do
     local done = false
     local task = receive()
@@ -199,22 +208,28 @@ while true do
             os.rename(script, "container/root/" .. script)
         end
         done = build(task)
+
+        ::END_TASK::
+        execute("rm -rf container")
+        if done then
+            fwrite("[%s] succeed\n", os.date())
+            if failure > 0 then
+                failure = failure - 1
+            end
+        else
+            fwrite("[%s] fail\n", os.date())
+            failure = failure + 1
+            if failure == 10 then
+                fwrite("Worker stopped because of too many failures.\n")
+                os.exit(10)
+            end
+        end
+        idle = os.time()
     end
 
-    ::END_TASK::
-    os.execute("rm -rf container")
-    if done then
-        fwrite("[%s] succeed\n", os.date())
-        if failure > 0 then
-            failure = failure - 1
-        end
-    else
-        fwrite("[%s] fail\n", os.date())
-        failure = failure + 1
-        if failure == 10 then
-            fwrite("Worker stopped because of too many failures.\n")
-            os.exit(10)
-        end
-    end
     sleep(1)
+    if (os.time() - idle) % 60 == 0 then
+        local m = math.floor((os.time() - idle) / 60)
+        fwrite("[%s] idle for %d min\n", os.date(), m)
+    end
 end

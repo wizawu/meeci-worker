@@ -78,8 +78,8 @@ end
 -- extract a container into 'container' directory
 -- [args] container: container name with suffix .bz2
 function tarx(container)
-    execute("rm -rf container && mkdir container")
-    return execute("tar xf " .. container .. " -C container")
+    execute("rm -rf container")
+    return execute("tar xf " .. container)
 end
 
 -- download a shallow repository and its build script
@@ -104,30 +104,39 @@ end
 
 -- inform meeci-web the result
 function report(task, start, stop, code)
+    local cmd = string.format(
+        "wput /var/lib/meeci/worker/logs/%s/%d.log " ..
+        meeci_ftp .. "/logs/%s/%d.log",
+        task.type, task.id, task.type, task.id
+    )
+    execute(cmd);
     local str = json.encode({
+        user   = task.user,
         type   = task.type,
         id     = task.id,
         start  = start,
         stop   = stop,
-        exit   = code
+        exit   = code,
+        container = task.container
     })
     mc:set(string.sub(task.type, 1, 1) .. ":" .. task.id, str)
     local path = string.format(
         "/finish/%s/%d", task.type, task.id
     )
     http.request(meeci_http .. path, tostring(code))
+    print("POST " .. meeci_http .. path) 
 end
 
 -- compress and upload a new container
 -- [args] container: container name with suffix .bz2
 function upload(container)
     execute("rm -f container/meeci_exit_status")
-    if execute("tar jcf container.bz2 -C container .") then
-        local url = meeci_ftp .. "/containers/" .. container
-        if execute("wput container.bz2 " .. url) then
-            os.remove("container.bz2")
-            return true
-        end
+    -- TODO: file changed as we read it
+    execute("tar jcf container.bz2 container")
+    local url = meeci_ftp .. "/containers/" .. container
+    if execute("wput container.bz2 " .. url) then
+        os.remove("container.bz2")
+        return true
     end
 end
 
@@ -170,11 +179,15 @@ function build(task)
     local stop = os.time()
     local code = tonumber(cat("container/meeci_exit_status"))
 
-    report(task, start, stop, code)
     if task.type == "build" then
+        report(task, start, stop, code)
         return true
     else
-        return upload(task.user .. "/" .. task.container .. ".bz2")
+        if (not upload(task.user .. "/" .. task.container .. ".bz2")) then
+            code = 21
+        end
+        report(task, start, stop, code)
+        return code == 0
     end
 end
 -->
@@ -219,12 +232,12 @@ while not test do
         ::END_TASK::
         execute("rm -rf container")
         if done then
-            fwrite("[%s] succeed\n", os.date())
+            fwrite("[%s] SUCCESS\n", os.date())
             if failure > 0 then
                 failure = failure - 1
             end
         else
-            fwrite("[%s] fail\n", os.date())
+            fwrite("[%s] ERROR\n", os.date())
             failure = failure + 1
             if failure == 10 then
                 fwrite("Worker stopped because of too many failures.\n")
@@ -236,7 +249,7 @@ while not test do
 
     -- TODO: sleep(1)
     sleep(10)
-    if (os.time() - idle) % 60 == 0 then
+    if (os.time() - idle) % 600 == 0 then
         local m = math.floor((os.time() - idle) / 60)
         fwrite("[%s] idle for %d min\n", os.date(), m)
     end

@@ -97,7 +97,7 @@ function gitclone(task)
     if not execute(cmd) then
         return false
     end
-    local url = meeci_http .. "/scripts/" .. task.script
+    local url = meeci_http .. "/scripts/" .. task.id
     cmd = "wget -O " .. dir .. "/meeci_build.sh " .. url
     return execute(cmd)
 end
@@ -113,7 +113,7 @@ function report(task, start, stop, code)
     })
     mc:set(string.sub(task.type, 1, 1) .. ":" .. task.id, str)
     local path = string.format(
-        "/finish/%s/%d", string.sub(task.type, 1, 1), task.id
+        "/finish/%s/%d", task.type, task.id
     )
     http.request(meeci_http .. path, tostring(code))
 end
@@ -174,7 +174,7 @@ function build(task)
     if task.type == "build" then
         return true
     else
-        return upload(task.container .. ".bz2")
+        return upload(task.user .. "/" .. task.container .. ".bz2")
     end
 end
 -->
@@ -194,7 +194,7 @@ while not test do
     if task then
         log(task)
         if task.type == "build" then
-            if not wget(task.container .. ".bz2") then
+            if not wget(task.user .. "/" .. task.container .. ".bz2") then
                 goto END_TASK
             end
             if not tarx(task.container .. ".bz2") then
@@ -209,7 +209,7 @@ while not test do
                 goto END_TASK
             end
             local script = task.container .. ".sh"
-            if not wget(script) then
+            if not wget(task.user .. "/" .. script) then
                 goto END_TASK
             end
             os.rename(script, "container/root/" .. script)
@@ -234,7 +234,8 @@ while not test do
         idle = os.time()
     end
 
-    sleep(1)
+    -- TODO: sleep(1)
+    sleep(10)
     if (os.time() - idle) % 60 == 0 then
         local m = math.floor((os.time() - idle) / 60)
         fwrite("[%s] idle for %d min\n", os.date(), m)

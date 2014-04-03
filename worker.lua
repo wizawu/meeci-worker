@@ -21,7 +21,7 @@ if not meeci_host then
     os.exit(2)
 end
 
-local meeci_http = "http://" .. meeci_host
+local meeci_http = "http://" .. meeci_host .. ":3780"
 local meeci_ftp = "ftp://" .. meeci_host .. "/meeci"
 local mc = memcache.connect(meeci_host, 11211)
 
@@ -61,7 +61,7 @@ function receive()
 end
 
 function log(task)
-    fwrite("[%s] %s %d: ", os.date(), task.type, task.id)
+    fwrite("[%s] %s %s: ", os.date(), task.type, task.strid)
     if task.type == "build" then
         io.write(task.url .. '\n')
     else
@@ -97,7 +97,10 @@ function gitclone(task)
     if not execute(cmd) then
         return false
     end
-    local url = meeci_http .. "/scripts/" .. task.id
+    local url = meeci_http .. string.format(
+        "/scripts/%s/%s/%s/%d", 
+        task.user, task.repository, task.owner, task.host
+    )
     cmd = "wget -O " .. dir .. "/meeci_build.sh " .. url
     return execute(cmd)
 end
@@ -105,23 +108,21 @@ end
 -- inform meeci-web the result
 function report(task, start, stop, code)
     local cmd = string.format(
-        "wput /var/lib/meeci/worker/logs/%s/%d.log " ..
-        meeci_ftp .. "/logs/%s/%d.log",
-        task.type, task.id, task.type, task.id
+        "wput /var/lib/meeci/worker/logs/%s/%s.log " ..
+        meeci_ftp .. "/logs/%s/%s.log",
+        task.type, task.strid, task.type, task.strid
     )
     execute(cmd);
     local str = json.encode({
         user   = task.user,
-        type   = task.type,
-        id     = task.id,
         start  = start,
         stop   = stop,
         exit   = code,
         container = task.container
     })
-    mc:set(string.sub(task.type, 1, 1) .. ":" .. task.id, str)
+    mc:set(string.sub(task.type, 1, 1) .. ":" .. task.strid, str)
     local path = string.format(
-        "/finish/%s/%d", task.type, task.id
+        "/finish/%s/%s", task.type, task.strid
     )
     http.request(meeci_http .. path, tostring(code))
     print("POST " .. meeci_http .. path) 
@@ -156,10 +157,10 @@ function build(task)
 
     -- file log
     local logdir = "/var/lib/meeci/worker/logs"
-    local log = string.format("%s/%s/%d.log", logdir, task.type, task.id)
+    local log = string.format("%s/%s/%s.log", logdir, task.type, task.strid)
     log = io.open(log, 'a')
     -- memcache log
-    local key = string.sub(task.type, 1, 1) .. "#" .. tostring(task.id)
+    local key = string.sub(task.type, 1, 1) .. "#" .. tostring(task.strid)
     mc:set(key, "")
 
     local start = os.time()

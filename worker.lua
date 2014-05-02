@@ -89,7 +89,9 @@ function gitclone(task)
         return false
     end
     local cmd = "git clone --depth 30 -b %s %s %s"
-    cmd = string.format(cmd, task.branch, task.url, dir)
+    local https_url = "https://github.com/" .. task.owner ..
+                      "/" .. task.repository .. ".git"
+    cmd = string.format(cmd, task.branch, https_url, dir)
     if not execute(cmd) then
         return false
     end

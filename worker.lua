@@ -21,7 +21,7 @@ if not meeci_host then
     os.exit(2)
 end
 
-local meeci_http = "http://" .. meeci_host .. ":3780"
+local meeci_http = "http://" .. meeci_host .. ":80"
 local meeci_ftp = "ftp://" .. meeci_host .. "/meeci"
 local mc = memcache.connect(meeci_host, 11211)
 

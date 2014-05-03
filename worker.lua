@@ -25,9 +25,12 @@ local meeci_http = "http://" .. meeci_host .. ":80"
 local meeci_ftp = "ftp://" .. meeci_host .. "/meeci"
 local mc = memcache.connect(meeci_host, 11211)
 
---< function definitions
+--<< function definitions
+
+local strformat = string.format
+
 function fwrite(fmt, ...)
-    return io.write(string.format(fmt, ...))
+    return io.write(strformat(fmt, ...))
 end
 
 function sleep(n)
@@ -65,7 +68,7 @@ function log(task)
     if task.type == "build" then
         io.write(task.url .. '\n')
     else
-        io.write(task.container .. '\n')
+        fwrite("%s@%s\n", task.container, task.user)
     end
 end
 
@@ -76,7 +79,7 @@ function wget(file)
 end
 
 -- extract a container into 'container' directory
--- [args] container: container name with suffix .bz2
+-- [args] container: container name with suffix .tgz
 function tarx(container)
     execute("rm -rf container")
     return execute("tar xf " .. container)
@@ -91,7 +94,7 @@ function gitclone(task)
     local cmd = "git clone --depth 30 -b %s %s %s"
     local https_url = "https://github.com/" .. task.owner ..
                       "/" .. task.repository .. ".git"
-    cmd = string.format(cmd, task.branch, https_url, dir)
+    cmd = strformat(cmd, task.branch, https_url, dir)
     if not execute(cmd) then
         return false
     end
@@ -99,8 +102,8 @@ function gitclone(task)
     if not execute(cmd) then
         return false
     end
-    local url = meeci_http .. string.format(
-        "/scripts/%s/%s/%s/%d", 
+    local url = meeci_http .. strformat(
+        "/scripts/%s/%s/%s/%d",
         task.user, task.repository, task.owner, task.host
     )
     cmd = "wget -O " .. dir .. "/meeci_build.sh " .. url
@@ -109,7 +112,7 @@ end
 
 -- inform meeci-web the result
 function report(task, start, stop, code)
-    local cmd = string.format(
+    local cmd = strformat(
         "wput /var/lib/meeci/worker/logs/%s/%s.log " ..
         meeci_ftp .. "/logs/%s/%s.log",
         task.type, task.strid, task.type, task.strid
@@ -122,23 +125,24 @@ function report(task, start, stop, code)
         exit   = code,
         container = task.container
     })
-    mc:set(string.sub(task.type, 1, 1) .. ":" .. task.strid, str)
-    local path = string.format(
+    mc:set(task.type:sub(1, 1) .. ":" .. task.strid, str)
+    local url = meeci_http .. strformat(
         "/finish/%s/%s", task.type, task.strid
     )
-    http.request(meeci_http .. path, tostring(code))
-    print("POST " .. meeci_http .. path) 
+    print("Exit status " .. code)
+    http.request(url, tostring(code))
+    print("POST " .. url)
 end
 
 -- compress and upload a new container
--- [args] container: container name with suffix .bz2
+-- [args] container: container name with suffix .tgz
 function upload(container)
     execute("rm -f container/meeci_exit_status")
     -- TODO: file changed as we read it
-    execute("tar jcf container.bz2 container")
+    execute("tar zcf container.tgz container")
     local url = meeci_ftp .. "/containers/" .. container
-    if execute("wput container.bz2 " .. url) then
-        os.remove("container.bz2")
+    if execute("wput container.tgz " .. url) then
+        os.remove("container.tgz")
         return true
     end
 end
@@ -154,15 +158,15 @@ function build(task)
         script = task.container .. ".sh"
     end
     local cmd = "cd %s; bash %s; echo -n $? > /meeci_exit_status"
-    cmd = string.format(cmd, dir, script)
-    cmd = string.format("systemd-nspawn -D ./container bash -c '%s'", cmd)
+    cmd = strformat(cmd, dir, script)
+    cmd = strformat("systemd-nspawn -D ./container bash -c '%s'", cmd)
 
     -- file log
     local logdir = "/var/lib/meeci/worker/logs"
-    local log = string.format("%s/%s/%s.log", logdir, task.type, task.strid)
+    local log = strformat("%s/%s/%s.log", logdir, task.type, task.strid)
     log = io.open(log, 'a')
     -- memcache log
-    local key = string.sub(task.type, 1, 1) .. "#" .. tostring(task.strid)
+    local key = task.type:sub(1, 1) .. "#" .. tostring(task.strid)
     mc:set(key, "")
 
     local start = os.time()
@@ -182,46 +186,46 @@ function build(task)
     local stop = os.time()
     local code = tonumber(cat("container/meeci_exit_status"))
 
-    if task.type == "build" then
-        report(task, start, stop, code)
-        return true
-    else
-        if (not upload(task.user .. "/" .. task.container .. ".bz2")) then
+    if task.type == "container" then
+        if not upload(task.user .. "/" .. task.container .. ".tgz") then
             code = 21
         end
-        report(task, start, stop, code)
-        return code == 0
     end
+    report(task, start, stop, code)
+    return code == 0
 end
--->
 
-local test = os.getenv("TEST") and true or false
+-->>
 
-if not test and not wget("meeci-minbase.bz2") then
-    print("Cannot wget meeci-minbase.bz2")
+if not wget("meeci-minbase.tgz") then
+    print("Cannot wget meeci-minbase.tgz")
     os.exit(3)
 end
 
 -- main loop --
-local failure, idle = 0, os.time()
+local failure = 0
+local sleep_intv = 10
+local idle = os.time()
+
 while not test do
     local done = false
     local task = receive()
+
     if task then
         log(task)
         if task.type == "build" then
-            if not wget(task.user .. "/" .. task.container .. ".bz2") then
+            if not wget(task.user .. "/" .. task.container .. ".tgz") then
                 goto END_TASK
             end
-            if not tarx(task.container .. ".bz2") then
+            if not tarx(task.container .. ".tgz") then
                 goto END_TASK
             end
-            os.remove(task.container .. ".bz2")
+            os.remove(task.container .. ".tgz")
             if not gitclone(task) then
                 goto END_TASK
             end
         else
-            if not tarx("meeci-minbase.bz2") then
+            if not tarx("meeci-minbase.tgz") then
                 goto END_TASK
             end
             local script = task.container .. ".sh"
@@ -248,11 +252,12 @@ while not test do
             end
         end
         idle = os.time()
+    else
+        -- while there is no task
+        sleep(sleep_intv)
     end
 
-    -- TODO: sleep(1)
-    sleep(10)
-    if (os.time() - idle) % 600 == 0 then
+    if (os.time() - idle) % 600 < sleep_intv then
         local m = math.floor((os.time() - idle) / 60)
         fwrite("[%s] idle for %d min\n", os.date(), m)
     end

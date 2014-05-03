@@ -8,8 +8,8 @@ fi
 set -x -e
 
 apt-get install -y --no-install-recommends \
-                luajit lua-socket git wget wput \
-                systemd systemd-sysv
+                debootstrap systemd systemd-sysv \
+                luajit lua-socket git wget wput
 
 if [[ ! `cat /proc/1/comm` == systemd ]]; then
     echo "Reboot the system with systemd and re-run this setup."
